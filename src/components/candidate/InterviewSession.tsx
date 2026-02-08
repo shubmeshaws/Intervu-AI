@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { InterviewFlow } from '../../lib/types/interview';
+import { SimliAvatar } from './SimliAvatar';
 
 interface InterviewSessionProps {
     flow: InterviewFlow;
@@ -23,8 +24,46 @@ export const InterviewSession: React.FC<InterviewSessionProps> = ({ flow, onComp
 
     const currentQuestion = currentQuestionIndex >= 0 ? flow.questions[currentQuestionIndex] : null;
 
-    // Browser TTS (reliable fallback)
-    const speak = (text: string) => {
+    // OpenAI TTS via API
+    const speak = async (text: string) => {
+        setIsSpeaking(true);
+
+        try {
+            const response = await fetch('/api/meshy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'tts', text })
+            });
+
+            if (response.ok) {
+                const audioBlob = await response.blob();
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const audio = new Audio(audioUrl);
+
+                audio.onended = () => {
+                    setIsSpeaking(false);
+                    setIsRecording(true);
+                    startTranscription();
+                    URL.revokeObjectURL(audioUrl);
+                };
+
+                audio.onerror = () => {
+                    console.error("Audio playback failed, using browser TTS");
+                    fallbackSpeak(text);
+                };
+
+                await audio.play();
+            } else {
+                throw new Error("TTS API failed");
+            }
+        } catch (err) {
+            console.error("OpenAI TTS failed, falling back to browser:", err);
+            fallbackSpeak(text);
+        }
+    };
+
+    // Browser TTS fallback
+    const fallbackSpeak = (text: string) => {
         if ('speechSynthesis' in window) {
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.rate = 0.95;
@@ -37,13 +76,9 @@ export const InterviewSession: React.FC<InterviewSessionProps> = ({ flow, onComp
             };
             window.speechSynthesis.speak(utterance);
         } else {
-            // Silent fallback
-            setIsSpeaking(true);
-            setTimeout(() => {
-                setIsSpeaking(false);
-                setIsRecording(true);
-                startTranscription();
-            }, 3000);
+            setIsSpeaking(false);
+            setIsRecording(true);
+            startTranscription();
         }
     };
 
@@ -76,7 +111,12 @@ export const InterviewSession: React.FC<InterviewSessionProps> = ({ flow, onComp
             }
         };
 
-        recognition.onerror = (event: any) => console.error("Speech recognition error", event.error);
+        recognition.onerror = (event: any) => {
+            // 'no-speech' is normal when user is silent, ignore it
+            if (event.error !== 'no-speech') {
+                console.error("Speech recognition error", event.error);
+            }
+        };
         recognition.start();
         recognitionRef.current = recognition;
     };
@@ -107,6 +147,13 @@ export const InterviewSession: React.FC<InterviewSessionProps> = ({ flow, onComp
             stopTranscription();
         };
     }, []);
+
+    // Ensure video element shows the stream when both are available
+    useEffect(() => {
+        if (videoRef.current && videoStream) {
+            videoRef.current.srcObject = videoStream;
+        }
+    }, [videoStream]);
 
     // Timer
     useEffect(() => {
@@ -191,8 +238,12 @@ export const InterviewSession: React.FC<InterviewSessionProps> = ({ flow, onComp
             {currentQuestionIndex === -1 && (
                 <div className="text-center space-y-6 max-w-lg">
                     <div className="relative inline-block">
-                        <div className={`w-24 h-24 rounded-full mx-auto overflow-hidden border-2 transition-all ${isSpeaking ? 'border-primary ring-4 ring-primary/30 animate-pulse' : 'border-white/20'}`}>
-                            <img src="/avatars/meshy.png" alt="Meshy" className="w-full h-full object-cover" />
+                        <div className={`w-24 h-24 rounded-full mx-auto overflow-hidden border-2 transition-all ${isSpeaking ? 'border-primary ring-4 ring-primary/30' : 'border-white/20'}`}>
+                            <SimliAvatar
+                                text={flow.questions[0]?.question || "Welcome!"}
+                                isSpeaking={isSpeaking}
+                                className="w-full h-full"
+                            />
                         </div>
                         <span className="absolute -bottom-1 -right-2 bg-green-500 text-[9px] font-semibold px-2 py-0.5 rounded-full text-white">Online</span>
                     </div>
@@ -213,25 +264,41 @@ export const InterviewSession: React.FC<InterviewSessionProps> = ({ flow, onComp
             {currentQuestionIndex >= 0 && (
                 <div className="w-full grid grid-cols-1 lg:grid-cols-2 gap-6">
 
-                    {/* Video Feed */}
+                    {/* Side-by-Side Video Panels */}
                     <div className="space-y-4">
-                        <div className="relative aspect-video bg-black rounded-xl overflow-hidden border border-white/10">
-                            <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover scale-x-[-1]" />
-
-                            {/* Avatar PIP */}
-                            <div className={`absolute bottom-3 right-3 w-16 h-16 rounded-full border-2 overflow-hidden transition-all ${isSpeaking ? 'border-primary ring-2 ring-primary/40 animate-pulse' : 'border-white/20'}`}>
-                                <img src="/avatars/meshy.png" className="w-full h-full object-cover" alt="Meshy" />
+                        <div className="grid grid-cols-2 gap-4">
+                            {/* AI Avatar Panel */}
+                            <div className={`relative aspect-video bg-gradient-to-br from-gray-900 to-black rounded-xl overflow-hidden border transition-all ${isSpeaking ? 'border-primary ring-2 ring-primary/30' : 'border-white/10'}`}>
+                                <SimliAvatar
+                                    text={followUpResponse?.followUp || currentQuestion?.question || ""}
+                                    isSpeaking={isSpeaking}
+                                    onSpeakingEnd={() => {
+                                        setIsSpeaking(false);
+                                        setIsRecording(true);
+                                        startTranscription();
+                                    }}
+                                    className="w-full h-full"
+                                />
+                                {/* AI Avatar HUD */}
+                                <div className="absolute top-3 left-3 flex items-center gap-2 px-3 py-1.5 bg-black/70 backdrop-blur rounded-full text-xs">
+                                    <div className={`w-2 h-2 rounded-full ${isSpeaking ? 'bg-primary animate-pulse' : 'bg-gray-500'}`} />
+                                    <span>Meshy {isSpeaking ? '• Speaking' : ''}</span>
+                                </div>
                             </div>
 
-                            {/* HUD */}
-                            <div className="absolute top-3 left-3 flex items-center gap-2 px-3 py-1.5 bg-black/70 backdrop-blur rounded-full text-xs">
-                                <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-500'}`} />
-                                <span>{isSpeaking ? 'Speaking' : 'Listening'}</span>
-                            </div>
-                            <div className="absolute top-3 right-3 px-3 py-1.5 bg-black/70 backdrop-blur rounded-full text-xs font-mono">
-                                <span className={timeLeft < 20 ? 'text-red-400' : ''}>
-                                    {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
-                                </span>
+                            {/* Candidate Video Panel */}
+                            <div className={`relative aspect-video bg-black rounded-xl overflow-hidden border transition-all ${isRecording ? 'border-red-500/50 ring-2 ring-red-500/30' : 'border-white/10'}`}>
+                                <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover scale-x-[-1]" />
+                                {/* Candidate HUD */}
+                                <div className="absolute top-3 left-3 flex items-center gap-2 px-3 py-1.5 bg-black/70 backdrop-blur rounded-full text-xs">
+                                    <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-500'}`} />
+                                    <span>You {isRecording ? '• Recording' : ''}</span>
+                                </div>
+                                <div className="absolute top-3 right-3 px-3 py-1.5 bg-black/70 backdrop-blur rounded-full text-xs font-mono">
+                                    <span className={timeLeft < 20 ? 'text-red-400' : ''}>
+                                        {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                                    </span>
+                                </div>
                             </div>
                         </div>
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateFollowUp, getMeshyVoice } from '@/lib/architect/hf';
+import { generateFollowUp } from '@/lib/architect/hf';
+import { getMeshyVoiceEdge } from '@/lib/server/tts';
 
 export async function POST(req: NextRequest) {
     try {
@@ -11,7 +12,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (action === 'tts') {
-            const audioBlob = await getMeshyVoice(text);
+            const audioBlob = await getMeshyVoiceEdge(text);
             const arrayBuffer = await audioBlob.arrayBuffer();
             return new Response(arrayBuffer, {
                 headers: { 'Content-Type': 'audio/mpeg' },

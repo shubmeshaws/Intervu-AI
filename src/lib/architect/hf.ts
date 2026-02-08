@@ -18,26 +18,18 @@ export const generateFollowUp = async (question: string, transcript: string) => 
     Do not exceed 30 words.
     `;
 
-    const response = await hf.textGeneration({
-        model: "mistralai/Mistral-7B-Instruct-v0.2",
-        inputs: prompt,
-        parameters: { max_new_tokens: 100, temperature: 0.7 }
+    const response = await hf.chatCompletion({
+        model: "mistralai/Mistral-7B-Instruct-v0.3",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 100,
+        temperature: 0.7
     });
 
-    const text = response.generated_text.replace(prompt, "").trim();
+    const text = response.choices[0].message.content || "";
 
     if (text.includes("STRONG_RESPONSE")) {
         return { status: "strong", followUp: null };
     }
 
     return { status: "vague", followUp: text };
-};
-
-export const getMeshyVoice = async (text: string) => {
-    const response = await hf.textToSpeech({
-        model: "espnet/kan-bayashi_ljspeech_vits",
-        inputs: text,
-    });
-
-    return response; // This is a Blob
 };

@@ -25,6 +25,13 @@ export const SimliAvatar: React.FC<SimliAvatarProps> = ({
     const simliClientRef = useRef<SimliClient | null>(null);
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [isAnimating, setIsAnimating] = useState(false);
+    const onSpeakingEndRef = useRef(onSpeakingEnd);
+
+    // Keep the ref updated with the latest prop
+    useEffect(() => {
+        onSpeakingEndRef.current = onSpeakingEnd;
+    }, [onSpeakingEnd]);
 
     // Initialize Simli Client
     useEffect(() => {
@@ -60,6 +67,20 @@ export const SimliAvatar: React.FC<SimliAvatarProps> = ({
                     audioRef: audioRef.current,
                     enableConsoleLogs: false, // Cleaner console
                 } as any);
+
+                // Add event listeners for perfect audio/video sync
+                // 'speaking' triggers when audio actually starts playing
+                simliClient.on('speaking', () => {
+                    console.log("Simli: speaking started");
+                    setIsAnimating(true);
+                });
+
+                // 'silent' triggers when audio finishes playing
+                simliClient.on('silent', () => {
+                    console.log("Simli: silent started");
+                    setIsAnimating(false);
+                    onSpeakingEndRef.current?.();
+                });
 
                 // Listen for initialization success or failure
                 try {
@@ -134,19 +155,24 @@ export const SimliAvatar: React.FC<SimliAvatarProps> = ({
                 pcm16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
 
-            // Send to Simli
+            // Send to Simli - NO manual animation trigger here anymore.
+            // The 'speaking' event listener above will handle it when audio starts.
             simliClientRef.current.sendAudioData(new Uint8Array(pcm16Data.buffer));
 
         } catch (err) {
             console.error("Error sending audio to Simli:", err);
-            // Fallback to browser TTS
+            // Fallback to browser TTS (immediate sync)
             if ('speechSynthesis' in window) {
                 const utterance = new SpeechSynthesisUtterance(textToSpeak);
-                utterance.onend = () => onSpeakingEnd?.();
+                utterance.onstart = () => setIsAnimating(true);
+                utterance.onend = () => {
+                    setIsAnimating(false);
+                    onSpeakingEndRef.current?.();
+                };
                 window.speechSynthesis.speak(utterance);
             }
         }
-    }, [isConnected, onSpeakingEnd]);
+    }, [isConnected]);
 
     // Trigger speech when text changes and isSpeaking is true
     useEffect(() => {
@@ -199,7 +225,7 @@ export const SimliAvatar: React.FC<SimliAvatarProps> = ({
             {!showVideo && (
                 <div className="absolute inset-0">
                     <TalkingAvatar
-                        isSpeaking={isSpeaking}
+                        isSpeaking={isAnimating}
                         className="w-full h-full"
                     />
                 </div>
